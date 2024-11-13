@@ -127,7 +127,8 @@ def get_inner_directory(extract_path):
     """Get inner directory from extracted path"""
     contents = os.listdir(extract_path)
     directories = [d for d in contents if os.path.isdir(os.path.join(extract_path, d))]
-    
+    if len(directories) == 0: 
+        raise Exception(f"Error 0 directories found in path {extract_path}")
     if len(directories) == 1:
         inner_dir_path = os.path.join(extract_path, directories[0])
         return inner_dir_path
@@ -137,9 +138,9 @@ def get_inner_directory(extract_path):
         elif directories[1] == "__MACOSX":
             return os.path.join(extract_path, directories[0])
         else:
-            raise Exception("Expected Mac OS X file for 2 directories")
+            raise Exception(f"Expected Mac OS X file for 2 directories {extract_path}")
     else:
-        raise Exception("Error: 3 directories found")
+        raise Exception(f"Error: 3 directories found: extract path: {extract_path} \n directories: {directories}")
 
 def parse_args():
     """Parse command line arguments"""
@@ -152,14 +153,18 @@ def parse_args():
         help='Input directory containing zip files (default: ./patients/)'
     )
     parser.add_argument(
+        '--no-zip',
+        action='store_true',
+        help='Skip creating zip files for processed patient cases'
+    )
+    parser.add_argument(
         '--output-dir',
         default='dest/',
         help='Output directory for processed files (default: dest/)'
     )
     parser.add_argument(
-        '--series-desc',
-        nargs='+',
-        default=SeriesDescriptions,
+        '--series-desc-file',
+        default="target_series_descriptions.json",
         help='List of series descriptions to filter (default: predefined list)'
     )
     parser.add_argument(
@@ -178,6 +183,10 @@ def main():
     global allSeriesDescriptions
     allSeriesDescriptions = []
 
+
+    with open(args.series_desc_file) as file:
+        SeriesDescriptions = json.load(file)
+
     if args.explore:
         explore_dicomdir(args.explore)
         return
@@ -186,24 +195,36 @@ def main():
     zip_files = [item for item in parent_path.iterdir() if item.suffix.lower() == '.zip']
 
     for patient_zip in zip_files:
+        print(f"Working on {patient_zip}")
+
+
         extract_path = unzip_to_folder(patient_zip)
         patient_directory = get_inner_directory(extract_path)
-        print(f"Processing patient directory: {patient_directory}")
+        print(f"Processing patient directory: {extract_path} /{patient_directory}")
 
         new_directory_path = filter_LGE_images(
             patient_directory,
             args.output_dir,
-            args.series_desc
+            SeriesDescriptions
         )
         
-        zip_directory(new_directory_path, args.output_dir)
-
-        if not args.keep_temp:
-            print("Cleaning up temporary directories...")
-            shutil.rmtree(extract_path)
-            shutil.rmtree(new_directory_path)
+        if not args.no_zip:
+            # Create zip and clean up directories
+            zip_directory(new_directory_path, args.output_dir)
+            if not args.keep_temp:
+                print("Cleaning up temporary directories...")
+                shutil.rmtree(extract_path)
+                shutil.rmtree(new_directory_path)
+            else:
+                print("Keeping temporary directories as requested")
         else:
-            print("Keeping temporary directories as requested")
+            # Only clean up the extract path, keep the processed directory
+            print(f"Skipping zip file creation - keeping processed directory: {new_directory_path}")
+            if not args.keep_temp:
+                print("Cleaning up original extract directory...")
+                shutil.rmtree(extract_path)
+            else:
+                print("Keeping all temporary directories as requested")
 
     print("\nAll Series Descriptions found:", allSeriesDescriptions)
     with open("SeriesDescriptions.json", "w") as file:
