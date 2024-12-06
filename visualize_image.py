@@ -11,17 +11,14 @@ parser = argparse.ArgumentParser(description="file for visualizing files")
 # Additionaly I forgot to consider using "type" parameters as well as the "help parameters" for descrbiging the names
 parser.add_argument("--input_dir", "-i", default = "./data/processed_mri_data/", required = False)
 parser.add_argument("--patient", '-p', type=int, default = 529, required = False, help = 'patient number')
-parser.add_argument('-s', '--slice', type=int, default = 0, required = False, help='slice number')
+parser.add_argument('-s', '--slicetype', type=str, default = 'raw', required = False, help='slice type')
 
 
 
 args = parser.parse_args()
 
 images = []
-names = ['cine'] #'cine_whole', 'lge', 'raw']
-
-name = 'cine'
-
+name = args.slicetype  
 
 for index in range(5): 
     images.append(np.load(os.path.join(args.input_dir, f'{args.patient}_PSIR_{name}_{index}.npy'))) 

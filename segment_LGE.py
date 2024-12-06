@@ -26,6 +26,7 @@ DEVICE = args.device
 images = []
 names = ['raw']
 
+images.append(np.load(os.path.join(args.input_dir, f'{args.patient}_PSIR_cine_whole_{args.slice}.npy'))) 
 for name in names: 
     images.append(np.load(os.path.join(args.input_dir, f'{args.patient}_PSIR_{name}_{args.slice}.npy'))) 
 
@@ -64,10 +65,10 @@ binary_thresholded_y[binary_thresholded_y >= 0.5] = 255 # the images are scaled 
 # deatch().cpu().numpy() === get rid of gradietn computation (needed for getting using as numpy on cpu)
 images.append(binary_thresholded_y)
 
-fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+fig, axes = plt.subplots(1, 3, figsize=(10, 5))
 
 for ax, image, in zip(axes, images):
-    ax.imshow(image, cmap = 'gray', vmin = 0, vmax = 1)
+    ax.imshow(image, cmap = 'gray', vmin = 0, vmax = 255)
 
 
 plt.show()

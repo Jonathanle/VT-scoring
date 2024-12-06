@@ -51,7 +51,6 @@ print(files)
 
 ''' Sample: loading the last subject's PSIR file to check its keys '''
 
-pdb.set_trace()
 
 flge= sio.loadmat(new_path + '/'+ files[0]) # modified this to look at files 0, instead of files 2
 flge.keys()
@@ -153,12 +152,15 @@ def saver(si):
             for slice_no in range(flge['enhancement'][0].shape[0]):
                 scar= np.copy(flge['enhancement'][0][slice_no]).astype('float')
                 scar[scar==0]=np.nan
-                if np.nansum(scar)!=0:
+
+                # for our data still export
+
+                if np.nansum(scar)!= 0 or np.nansum(scar) == 0:
                 # if 1:
                     try:
                         _= flge['lv_endo'][0][slice_no][0][0]
                     except:
-                        print('couldnt get lv_endo')
+                        print('couldnt get lv_endo') # skipping slice?
                         continue
                     img_shape= np.transpose(flge['raw_image'][0,slice_no]).shape
                     myo_seg_endo= tomni.make_mask.make_mask_contour(img_shape, 
@@ -233,7 +235,17 @@ lge_=[]
 cine_=[]
 cine_whole_=[]
 
+
 for subject in os.listdir(key_dir):    
+
+
+
+    raw_=[]
+    lge_=[]
+    cine_=[]
+    cine_whole_=[]
+
+
     files= os.listdir(os.path.join(key_dir, subject))
     for f in files:
         idx= f[4:list(f).index('.')]
@@ -249,32 +261,35 @@ for subject in os.listdir(key_dir):
             lge_f = 'cine_whole_'+str(idx)+'.npy'
             cine_whole_.append(resize_volume(np.load(os.path.join(key_dir, subject, lge_f)), ex=224))
 
-raw_ = np.array(raw_)
-lge_= np.array(lge_)
-cine_= np.array(cine_)
-cine_whole_ = np.array(cine_whole_)
+    raw_ = np.array(raw_)
+    lge_= np.array(lge_)
+    cine_= np.array(cine_)
+    cine_whole_ = np.array(cine_whole_)
 
-raw_.shape, lge_.shape, cine_.shape, cine_whole_.shape
+# raw_.shape, lge_.shape, cine_.shape, cine_whole_.shape
 
 # ##### Store as JSON
 
-import json
+    import json
 
-datas = {'lge_whole': cine_whole_,
-         'lge_cropped': cine_,
-         'masked_input': raw_, 
-         'lge_seg': lge_}
+    datas = {'lge_whole': cine_whole_,
+            'lge_cropped': cine_,
+            'masked_input': raw_, 
+            'lge_seg': lge_}
 
-def default(obj):
-    if type(obj).__module__ == np.__name__:
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        else:
-            return obj.item()
-    raise TypeError('Unknown type:', type(obj))
+    def default(obj):
+        if type(obj).__module__ == np.__name__:
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            else:
+                return obj.item()
+        raise TypeError('Unknown type:', type(obj))
 
-with open("./sample_inference_data.json", "w") as outfile: 
-    json.dump(datas, outfile, default=default)
+    with open(f"./cropped_myo_lge_testing/{subject}/{subject}_inference_data.json", "w") as outfile: 
+        json.dump(datas, outfile, default=default)
+
+
+
 
 
 # ##### Load JSON
