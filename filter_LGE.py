@@ -15,6 +15,10 @@ SeriesDescriptions = [
     "LATE GAD MAG SERIES"
 ]
 
+
+# Considerations ---> How od i know if an image is LGE? shoudl i use PSIR or MAG Image sany distinguishiung qualities
+# whether to select SA TI 320 Delayed - seems to be a mag image
+
 def filter_LGE_images(path, destination, SeriesDescriptions=SeriesDescriptions):
     """
     Filters DICOM files based on SeriesDescription and maintains directory structure.

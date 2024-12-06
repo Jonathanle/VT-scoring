@@ -2,6 +2,8 @@ import os
 import sys
 from pathlib import Path
 
+s
+
 def analyze_directory(path):
    total_files = 0
    empty_dirs = 0
