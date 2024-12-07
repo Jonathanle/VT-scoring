@@ -25,10 +25,10 @@ def parse_args():
     )
     
     parser.add_argument(
-        '-i', '--input_dir',
+        '-i', '--input-dir',
         type=str,
-        required=True,
-        default='',
+        required=False,
+        default='C:/Users/jonathanle/downloads/lge_data/data',
         help='Path to directory containing .mat files'
     )
     parser.add_argument("--save_json", action = 'store_true', required = False, help = 'save all the files to json format')
@@ -46,16 +46,36 @@ def parse_args():
         parser.error(f'Input directory {args.input_dir} does not exist')
     
     return args
-
+"""
 def std_img(tens, global_min = 0, global_max = 255):
-    """Standardize image to 0-1 range
-
-    Requires the original scale of the iamges to be from 0 to 255 
-    """
     # this is equivalent to dividing by 255
 
     t_ = (tens- global_min) /(global_max - global_min)
     return t_
+"""
+
+# what pixel values do you want to emphasize and why si the scaling important?
+def std_img(tens, min_p_value = None, max_p_value = None):
+    # amin and amax are same as the max and min versions
+
+    min_value = np.amin(tens)
+    max_value = np.amax(tens)
+
+    # introduce a custom scaling option for normalization
+    if min_p_value is not None and max_p_value is not None: 
+        min_value = min_p_value
+        max_value = max_p_value
+
+
+    result = tens.copy()
+    
+    # Use np.maximum to ensure we don't go below 0 added this because normalizing myo mask requires this
+    result = np.maximum((result.astype(np.float64) - min_value) / (max_value - min_value), 0)
+
+
+    #normalized_values = (tens-min_value)/(max_value - min_value)
+    return result
+
 
 def resize_volume(img, ex=128):
     # this linear interpolation introduces subtle effects on the volume
@@ -72,25 +92,39 @@ def resize_volume(img, ex=128):
 
 def process_mat_file(file_path, saving_folder, filename):
     """Process a single .mat file and save its processed slices"""
+    # raw image shape  (1, slice_no, height, width)
     
     # Create output directory if it doesn't exist
     os.makedirs(saving_folder, exist_ok=True)
+
+
+    def load_files(file_path): 
+        # Load the .mat file
+        try:
+            data = sio.loadmat(file_path)
+        except Exception as e:
+            print(f"Error loading {file_path}: {e}")
+            return
+        # Verify it's cardiac data
+        try:
+            assert data['series_type'] == np.array(['Myocardial Evaluation'])
+        except:
+            print(f"File {filename} is not a cardiac evaluation sequence")
+            return
+
+        return data
+            
+    data = load_files(file_path)
     
-    # Load the .mat file
-    try:
-        data = sio.loadmat(file_path)
-    except Exception as e:
-        print(f"Error loading {file_path}: {e}")
-        return
-    # Verify it's cardiac data
-    try:
-        assert data['series_type'] == np.array(['Myocardial Evaluation'])
-    except:
-        print(f"File {filename} is not a cardiac evaluation sequence")
-        return
-        
+    if data is None: 
+        raise Exception("error no filepath or file is not myocardial evluation sequence")
+
     print(f'Processing {filename} - Number of slices: {data["enhancement"][0].shape[0]}')
-    
+
+
+
+
+
     # Process each slice
     for slice_no in range(data['enhancement'][0].shape[0]):
         # Get enhancement data (scar)
@@ -98,9 +132,7 @@ def process_mat_file(file_path, saving_folder, filename):
         scar[scar == 0] = np.nan
 
 
-        # Skip if no enhancement or missing endo contours
-        #if np.nansum(scar) == 0:
-        #    continue # This code automatically skips because we assume here that we have annotated contours, but we do nots
+        # Verify endo slice
         try:
             _ = data['lv_endo'][0][slice_no][0][0]
         except:
@@ -110,49 +142,86 @@ def process_mat_file(file_path, saving_folder, filename):
         # Get image shape and create masks
         img_shape = np.transpose(data['raw_image'][0,slice_no]).shape
 
-
+        # Create myo mask
         try:
             myo_seg_endo = tomni.make_mask.make_mask_contour(
                 img_shape, data['lv_endo'][0][slice_no][0][0][0])
             myo_seg_epi = tomni.make_mask.make_mask_contour(
-                img_shape, data['lv_epi'][0][slice_no][0][0][0])
+                # non homogenous array of what format? 
+                img_shape, data['lv_epi'][0][slice_no][0][0][0]) #  data['lv_epi'] shape: (table, slice_no, point, dimension) --> (1, num_slices, # points, 2)
+                # get the contours
         except: 
             print(f'error could not get lv epi or endo discarding slice')
             continue 
         # Create myocardium mask
+
         myo_seg = (myo_seg_epi - myo_seg_endo).astype('float')
-        data['raw_image'][0,slice_no] /= np.amax(data['raw_image'][0,slice_no])
+
+
+        # normalize image by finding the max NOTE: amax == max for numpy
+        data['raw_image'][0,slice_no] /= np.amax(data['raw_image'][0,slice_no]) # uses np standard indexing to get an image, 
+
+
         myo_seg[myo_seg == 0] = np.nan
         
         # Create final images
-        fin_img = data['raw_image'][0,slice_no] * myo_seg # potential changechanged this
-        imc_ = data['raw_image'][0,slice_no]
-        imc_full = std_img(np.array(data['raw_image'][0,slice_no]))
+        fin_img = data['raw_image'][0,slice_no] * myo_seg # for the slice create the segmented versio
+        imc_ = data['raw_image'][0,slice_no] # for the slice, get the originall normalized version
+
+
+
+
+        # normalize something alreaedy normalized? --> when i am normalizing the relative values stay the same when normalizej 
+
+        imc_full = std_img(np.array(data['raw_image'][0,slice_no])) # what effect does this have on normalized values? 
+
 
         fin_img[np.isnan(fin_img)] = 0
         
         # Convert to PIL images - what scale is this? do scales matter?
-        im = Image.fromarray(np.uint8(cm.gray(fin_img)*255)).convert('L')
-        imc__ = Image.fromarray(np.uint8(cm.gray(imc_)*255)).convert('L')
+        im = Image.fromarray(np.uint8(cm.gray(fin_img)*255)).convert('L') # why is L importnat? 
+        imc__ = Image.fromarray(np.uint8(cm.gray(imc_)*255)).convert('L') # Create unnormalized versions
         scar_im = Image.fromarray(np.uint8(cm.gray(scar)*255)).convert('L')
 
 
-        #if os.path.splitext(filename)[0] == '9952_PSIR':
-         #   pdb.set_trace()
+        if os.path.splitext(filename)[0] == '529_PSIR' and slice_no == 1:
+            pass
+            #pdb.set_trace()
+        # normalize the whole image --> crop out the image, 
+
+        # Introduce a standarized normalization process 
             
         # Crop and resize
         bbox = im.getbbox()
-        im2 = std_img(np.array(im.crop(bbox)))  # cropped raw image with myo only
+        cropped_unormalized_image = np.array(imc__.crop(bbox))
+
+        imc = std_img(cropped_unormalized_image)  # cropped raw image
+        imc = resize_volume(imc) #
+ 
+        # wouldnt there be different scales avoid artificial brightening of myo by introducing bloodpools
+
+        full_image = Image.fromarray(np.uint8(cm.gray(imc_full)*255)).convert('L') # why is L importnat? 
+        
+        min_value_cropped_ui = np.min(cropped_unormalized_image) # introduce further distrubitno of images to emphasize variance of LGE
+        max_value_cropped_ui = np.max(cropped_unormalized_image)
+
+
+        # when normalizing with uint values, the values wrap back around, especially witht eh uint datatype.
+        # when the values get subtracted to minimum the values are literally wrap around with uint 8.
+        # therefore we dont want to deal with mask image; we shoudl specifically select the region.
+        im2 = std_img(np.array(im.crop(bbox)), min_value_cropped_ui, max_value_cropped_ui)  # cropped raw image with myo only 
         im2 = resize_volume(im2)
 
-    
-        imc = std_img(np.array(imc__.crop(bbox)))  # cropped raw image
-        imc = resize_volume(imc)
+
         
+       
         sc2 = std_img(np.array(scar_im.crop(bbox)))  # cropped lge segmentation
         sc2 = resize_volume(sc2)
+
         
-        imc_full = resize_volume(imc_full, ex=224)  # full image
+        imc_full = resize_volume(imc_full, ex=128)  # full image these 
+
+        # somehow the imc_full values are extremelyl smsall.
         
         # Save processed images
         base_name = os.path.splitext(filename)[0]
@@ -161,13 +230,12 @@ def process_mat_file(file_path, saving_folder, filename):
         im2[np.isnan(im2)] = 0
         sc2[np.isnan(sc2)] = 0
 
-
-
         # here I know that interpolation creates the effects
         #if base_name == '9952_PSIR' and slice_no == 2:
-          #  pdb.set_trace()
+          #  pdb.set`_trace()
         #    assert im2[120, 60] == imc[120,60], f"slice: {slice_no} values: {im2[120,60]} {imc[120,60]}"
 
+        
         # Save numpy arrays to what? why are these names important? 
         np.save(os.path.join(saving_folder, f'{base_name}_raw_{slice_no}.npy'), im2)
         np.save(os.path.join(saving_folder, f'{base_name}_cine_{slice_no}.npy'), imc)
