@@ -117,7 +117,9 @@ class Preprocessor():
 import torch
 from torch.utils.data import Dataset
 
-class LGESliceDataset(Dataset):
+class LGEDataset(Dataset):
+
+    # TODO: it would be nice to add in the original CINE images for preprocessing
     def __init__(self, X, y, keys):
         """
         Args:
@@ -140,7 +142,8 @@ class LGESliceDataset(Dataset):
         Returns:
             tuple: (image, label) where image has shape (n_slices, height, width)
         """
-        return self.X[idx], self.y[idx], self.keys[idx]
+        # Error I forgot the small nuance of keeping the datatypes consistent when computin1
+        return self.X[idx],self.y[idx].to(dtype=torch.float), self.keys[idx]
     
     def get_dimensions(self):
         """Returns dimensions of data"""
@@ -161,7 +164,20 @@ def main():
 
     X, y, keys = pp.transform()
 
-    dataset = LGESliceDataset(X, y, keys)
+    dataset = LGEDataset(X, y, keys)
+
+
+    count1 = 0
+    count0 = 0
+    for element in range(len(dataset)):
+        _, label, _ = dataset[element]
+
+        if label == 1: 
+            count1 += 1
+        elif label == 0:
+            count0 += 1
+
+    print(f"count 1: {count1} count0: {count0}")
 
 
     import pdb
