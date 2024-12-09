@@ -35,8 +35,6 @@ raw_image = torch.tensor(images[0], dtype=torch.float32).unsqueeze(0).unsqueeze(
 
 
 
-
-
 if args.use_example:
     import json
     inf_data = json.load(open("./data/inference_sample.json"))

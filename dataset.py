@@ -49,7 +49,7 @@ class Preprocessor():
         """ 
 
 
-    def transform(self, n_slices = 3):
+    def transform(self, n_slices = 6):
         """
         Function that transforms the image data + the xlsx files into a pytorch dataset 
 

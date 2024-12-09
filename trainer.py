@@ -1,25 +1,67 @@
-
-"""
-Create a trainer that optimzes the model and allows for relevant properties to be shown
+""" Create a trainer that optimzes the model and allows for relevant properties to be shown
 """
 import pdb
 import torch
-from torch.utils.data import Subset, DataLoader
+from torch.utils.data import Subset, DataLoader, WeightedRandomSampler
 import torch.nn as nn
 
 
 import numpy as np
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
-from scoring_model import BaselineScorer
+from scoring_model import BaselineScorer, CNNScorer
 from dataset import Preprocessor, LGEDataset
+
+from torch.utils.data import SubsetRandomSampler
+"""
+Steps to validation 
+
+1 Ensure a basic flow to optimzation --> ensure no blatant errors
+2. once no blatant or critical errors --> verify the automated evaluation mechanism 
+3. once this is verified, experiment with controlled approaches to impmrovement.
+
+
+# based on how the model is behaving how should i optimize why do i do so? come up with reasons.
+
+# i noticedd that the model performance is not learning --> this means that the complexity is not really doing anythig
+nee dmore capability / decision making power for more complex decisions
+
+- bottleneck 1 - informational content - actual metrics that we want.
+
+
+here propose scientific method how to do --> peopose reasonable args about convergence and decision making.
+keep stable finding and control factoors - think about outputs and represent., - samed as math - need simple models.
+regularized finding
+- most of what i do in deveoopment involves noise the ture skill here is evaluating precisely howt he model moves. 
+
+
+- how do i decide? - dont the images have to be inputted within a specific manner ever time?
+
+- think abt principles 0 get ds methods
+- how does  a strat converge to 
+"""
+
+"""
+Training Difficulties - Interpreting what does AUC actually mean? how cna I improve and see the results? can I control what I do in testing? 
+- cognitvie is AUC being interpreted correctly? with probability values?o
+
+- notes kfold cross - too noisy very hardd to implement - not 
+- need a better way of evaluating systems of AI (better testing and representational systems)
+- in ML and AI determine why it is soo hard to analyze and see waht methods I can do to diagnose specifici errors
+"""
+
+
 class TrainingConfig():
     def __init__(self): 
-        self.learning_rate = 0.0001
+        self.learning_rate = 1e-3
         self.DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.batch_size = 1
-        self.num_epochs = 5
+        self.batch_size = 10
+        self.num_epochs = 1 
+
+        self.pos_weight = 1.0 
+        self.n_slices = 6
+
 class Trainer():
     """
     Class for Training LGE Model 
@@ -33,12 +75,12 @@ class Trainer():
     - forward + backward optitmizer
 
     """
-
-    def __init__(self, model, train_loader,evaluator,  val_loader, config): 
+    # TODO: I broke my implementataion, i need to specifcy a better way of interfacign with both traijing and kfold
+    # Idea dont hold trainers with specifc objects, rather use the methods as interfaces to take in the training and kfold.
+    def __init__(self, model,evaluator, config): 
 
         self.model = model.to(config.DEVICE)
-        self.train_loader = train_loader
-        self.val_loader = val_loader
+
         self.config = config
 
         self.evaluator = evaluator
@@ -47,16 +89,16 @@ class Trainer():
             model.parameters(), 
             lr = config.learning_rate
         )
-        pos_weight = torch.tensor([2.0]).to(config.DEVICE) # Error I need to push this into the devicd
+        pos_weight = torch.tensor([config.pos_weight]).to(config.DEVICE) # Error I need to push this into the devicd
         self.criterion = nn.BCEWithLogitsLoss(pos_weight = pos_weight)
 
-    def train_epoch(self):
+    def train_epoch(self, loader):
         """Single training epoch."""
         #TODO: Evaluate to see if this correct and ideal for my kind of data
         self.model.train()
         total_loss = 0
         
-        for batch_idx, (data, target, patient_id) in enumerate(self.train_loader):
+        for batch_idx, (data, target, patient_id) in enumerate(loader): # things hard to analyze --> what are the dynamics of teh daataloader? 
             data = data.to(self.config.DEVICE)
             target = target.to(self.config.DEVICE)
 
@@ -70,7 +112,7 @@ class Trainer():
             
             total_loss += loss.item()
             
-        return total_loss / len(self.train_loader)
+        return total_loss / len(loader)
 
     def save_checkpoint(self, is_best=False):
         """Save model checkpoint."""
@@ -84,19 +126,23 @@ class Trainer():
             path = self.config.checkpoint_dir / 'best_model.pt'
             torch.save(checkpoint, path)
 
-    def train(self):
-        """Main training loop with validation."""
+    
+    def train(self, train_dataloader, val_dataloader):
+        """
+        TODO: input the dataloader and val datalooader 
+        """
         for epoch in range(self.config.num_epochs):
             # Training
-            train_loss = self.train_epoch()
+            train_loss = self.train_epoch(train_dataloader)
             
             # Validation
-            val_metrics = self.evaluator.evaluate(self.val_loader)
+            val_metrics = self.evaluator.evaluate(val_dataloader)
             val_auc = val_metrics['auc']
             sensitivity = val_metrics['sensitivity']
             specificity = val_metrics['specificity']
             precision = val_metrics['precision']
             recall = val_metrics['recall']
+
             """         
             # Learning rate scheduling
             self.scheduler.step(val_auc)
@@ -115,8 +161,51 @@ class Trainer():
                 break
             
             """
-            print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Val AUC = {val_auc:.4f} precision: {precision:.4f} recall {recall}")
+            print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Val AUC = {val_auc:.4f} precision: {precision:.4f} recall {recall} sens {sensitivity} spec {specificity}")
 
+
+
+
+    def train_k_fold(self, k_fold_loaders):
+        """Main training loop with validation. Uses kfold for validating"""
+
+        metrics = np.zeros((len(k_fold_loaders), 5), dtype=np.float32)
+
+        for i, (train_loader, val_loader) in enumerate(k_fold_loaders): 
+            for epoch in range(self.config.num_epochs):
+                # Training
+                train_loss = self.train_epoch(train_loader)
+                
+                # Validation
+                val_metrics = self.evaluator.evaluate(val_loader)
+                val_auc = val_metrics['auc']
+                sensitivity = val_metrics['sensitivity']
+                specificity = val_metrics['specificity']
+                precision = val_metrics['precision']
+                recall = val_metrics['recall']
+
+                metrics[i] = np.array([val_auc, sensitivity, specificity, precision, recall])
+                """         
+                # Learning rate scheduling
+                self.scheduler.step(val_auc)
+                
+                # Save best model
+                if val_auc > self.best_val_auc:
+                    self.best_val_auc = val_auc
+                    self.patience_counter = 0
+                    self.save_checkpoint(is_best=True)
+                else:
+                    self.patience_counter += 1
+                
+                # Early stopping
+                if self.patience_counter >= self.config.patience:
+                    print("Early stopping triggered")
+                    break
+                
+                """
+                print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Val AUC = {val_auc:.4f} precision: {precision:.4f} recall {recall} sens {sensitivity} spec {specificity}")
+        scores = np.mean(metrics, axis = 0)
+        print(f"auc: {scores[0]} sens: {scores[1]} spec: {scores[2]} precision: {scores[3]}")
 
 
 class Evaluator():
@@ -129,29 +218,21 @@ class Evaluator():
     def evaluate(self, data_loader):
         """Evaluate model with core metrics."""
         self.model.eval()
-        predictions = []
-        targets = []
-        pdb.set_trace()
-        for data, target, patient_id in data_loader:
-            data = data.to(self.device)
-            output = self.model(data)
-            pred = torch.sigmoid(output)
-            
-            predictions.extend(pred.cpu().numpy())
-            targets.extend(target.cpu().numpy())
+
+
+
+        predictions, targets = self._get_predictions(data_loader)
         
-        predictions = np.array(predictions)
-        targets = np.array(targets)
-        
-        # Calculate core metrics
-        auc = roc_auc_score(targets, predictions)
-        accuracy = ((predictions > 0.5) == targets).mean()
-        
-        # Calculate sensitivity and specificity
-        true_positives = ((predictions > 0.5) & (targets == 1)).sum()
-        false_negatives = ((predictions <= 0.5) & (targets == 1)).sum()
-        true_negatives = ((predictions <= 0.5) & (targets == 0)).sum()
-        false_positives = ((predictions > 0.5) & (targets == 0)).sum()
+
+        auc, accuracy, true_positives, false_negatives, true_negatives, false_positives = self._get_metrics(predictions, targets)
+
+
+
+        # Calculate more comples metrics (This one is easier to verify)
+
+
+        # Verifying the modularization of the behavior
+        print(f"tp: {true_positives} false_negatives: {false_negatives} tn: {true_negatives} fp {false_positives}")
         
         sensitivity = true_positives / (true_positives + false_negatives)
         specificity = true_negatives / (true_negatives + false_positives)
@@ -169,66 +250,170 @@ class Evaluator():
         }
 
 
+    def _get_predictions(self, data_loader):
+        predictions = []
+        targets = []
+        for data, target, patient_id in data_loader:
+            data = data.to(self.device)
+            output = self.model(data)
+            pred = torch.sigmoid(output)
+            
+            predictions.extend(pred.detach().cpu().numpy())
+            targets.extend(target.cpu().numpy())
+        # at this point we can get and parse this behavior more rigorousl        
+
+        # Are these specifically np array of shape what? these 1d arrays
+        return np.array(predictions), np.array(targets)
+
+    def _get_metrics(self, predictions, targets):
+
+        "internal methods are tested for helpers, underscores emphasize that we do NOT use these functions externally, but allow for testing"
+
+        """
+        calcualtes the predictions and targets given np array 
+        """        
+        # Calculate core metrics
+        auc = roc_auc_score(targets, predictions)
+        accuracy = ((predictions > 0.5) == targets).mean()
+        
+        # Calculate sensitivity and specificity
+        true_positives = ((predictions > 0.5) & (targets == 1)).sum()
+        false_negatives = ((predictions <= 0.5) & (targets == 1)).sum()
+        true_negatives = ((predictions <= 0.5) & (targets == 0)).sum()
+        false_positives = ((predictions > 0.5) & (targets == 0)).sum()
+
+        return auc, accuracy, true_positives, false_negatives, true_negatives, false_positives
+
+
+class DatasetSplitter(): 
+    def __init__(self): 
+        pass
+    def split_dataset(self, dataset, combine_train_validation_sets = False):
+
+        indices = list(range(len(dataset)))
+        labels = [dataset[i][1] for i in indices]
+
+        train_idx, test_idx = train_test_split(
+            indices,
+            stratify = labels, 
+            test_size = 0.3
+        )
+
+
+        test_labels = [dataset[i][1] for i in test_idx]
+
+
+        val_idx, final_test_idx = train_test_split(
+            test_idx,
+            stratify = test_labels, 
+            test_size = 0.5
+        )
+
+        if combine_train_validation_sets: 
+
+            train_dataset = Subset(dataset, train_idx + val_idx)
+            val_dataset = None 
+        else:
+            train_dataset = Subset(dataset, train_idx)
+            val_dataset = Subset(dataset, val_idx)
+
+        test_dataset = Subset(dataset, final_test_idx)
+
+        return train_dataset, val_dataset, test_dataset
+    def create_fold_dataloaders(self, dataset, n_splits=3, batch_size=32, random_state=42):
+        """
+        Creates DataLoaders for each fold in stratified k-fold cross validation.
+        
+        Returns:
+            list of tuples (train_loader, val_loader) for each fold
+        """
+        # Get labels for stratification
+        labels = [dataset[i][1] for i in range(len(dataset))]
+        
+        # Initialize StratifiedKFold
+        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+        
+        # Create DataLoaders for each fold
+        fold_loaders = []
+        
+        for train_idx, val_idx in skf.split(np.zeros(len(dataset)), labels):
+            train_sampler = SubsetRandomSampler(train_idx)
+            val_sampler = SubsetRandomSampler(val_idx)
+            
+            train_loader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                sampler=train_sampler,
+                num_workers=2,
+                pin_memory=True
+            )
+            
+            val_loader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                sampler=val_sampler,
+                num_workers=2,
+                pin_memory=True
+            )
+            
+            fold_loaders.append((train_loader, val_loader))
+        
+        return fold_loaders
+def create_weighted_sampler(dataset, labels):
+    # Calculate class weights
+    class_counts = np.bincount(labels)
+    class_weights = 1. / class_counts
+    
+    # Assign weight to each sample
+    sample_weights = class_weights[labels]
+    
+    # Create sampler
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(labels),
+        replacement=True
+    )
+    return sampler
 def main():
     config = TrainingConfig()
 
 
     # Code Requires ./dataprocessed mri_data repository
     pp = Preprocessor()
-    X, y, ids = pp.transform()
+    X, y, ids = pp.transform(config.n_slices) # this dataset 
 
     dataset = LGEDataset(X, y, ids)
 
-
-    indices = list(range(len(dataset)))
-    labels = [dataset[i][1] for i in indices]
-
-    train_idx, test_idx = train_test_split(
-        indices,
-        stratify = labels, 
-        test_size = 0.3
-    )
+    dataset_splitter = DatasetSplitter()
+    train_dataset, _ , test_dataset = dataset_splitter.split_dataset(dataset, combine_train_validation_sets=True)
 
 
-    test_labels = [dataset[i][1] for i in test_idx]
 
-
-    val_idx, final_test_idx = train_test_split(
-        test_idx,
-        stratify = test_labels, 
-        test_size = 0.5
-    )
-
-    train_dataset = Subset(dataset, train_idx)
-    val_dataset = Subset(dataset, val_idx)
-    test_dataset = Subset(dataset, final_test_idx)
-
-    def count_classes(dataset):
-        count1 = 0
-        count0 = 0
-        for element in range(len(dataset)):
-            _, label, _ = dataset[element]
-
-            if label == 1: 
-                count1 += 1
-            elif label == 0:
-                count0 += 1
-        print(f"{count1} + {count0}")
+    td2, vd2, _ = dataset_splitter.split_dataset(dataset, combine_train_validation_sets=False)
 
     train_dataloader = DataLoader(train_dataset, batch_size = config.batch_size)
-    val_dataloader = DataLoader(val_dataset, batch_size = config.batch_size)
+   # val_dataloader = DataLoader(val_dataset, batch_size = config.batch_size)
 
 
-    # Get dataset + split
-    model =  BaselineScorer()
+    labels = [dataset[i][1] for i in range(len(td2))]
+    pdb.set_trace()
+    weights = [1e-10 if label == 0 else 1e10 for label in labels]
+    sampler = WeightedRandomSampler(weights = weights, num_samples = len(weights), replacement = False)
+    tdl2 = DataLoader(td2, batch_size = config.batch_size, sampler = sampler)
 
+    batch = next(iter(tdl2))
+    vdl2 = DataLoader(vd2, batch_size = config.batch_size)
+
+    k_fold_loaders = dataset_splitter.create_fold_dataloaders(train_dataset)
+
+
+    model = CNNScorer(n_slices = config.n_slices)
     evaluator = Evaluator(model, config.DEVICE)
 
-    trainer = Trainer(model, train_dataloader, evaluator, val_dataloader, config)
-    
+    trainer = Trainer(model,  evaluator, config)
 
-    trainer.train()
-
+    #trainer.train_k_fold(k_fold_loaders) # here we don't need to be tied to a specific dataset and let it vary
+    trainer.train(tdl2, vdl2)
     return
 
 
