@@ -5,12 +5,14 @@ import torch
 from torch.utils.data import Subset, DataLoader, WeightedRandomSampler
 import torch.nn as nn
 
+import torch.nn.functional as F
+
 
 import numpy as np
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
-from scoring_model import BaselineScorer, CNNScorer
+from scoring_model import BaselineScorer, CNNScorer, RiskAssessmentModel
 from dataset import Preprocessor, LGEDataset
 
 from torch.utils.data import SubsetRandomSampler
@@ -49,6 +51,10 @@ Training Difficulties - Interpreting what does AUC actually mean? how cna I impr
 - notes kfold cross - too noisy very hardd to implement - not 
 - need a better way of evaluating systems of AI (better testing and representational systems)
 - in ML and AI determine why it is soo hard to analyze and see waht methods I can do to diagnose specifici errors
+
+AUC - useful for knowing if the model can actualy discriminate invariant to thresholds like precision
+
+TODO: System to adequately visualize the matplotlib intermediate LGE segmentations + the actual LGE image emphasized for humans
 """
 
 
@@ -56,12 +62,27 @@ class TrainingConfig():
     def __init__(self): 
         self.learning_rate = 1e-3
         self.DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.batch_size = 10
-        self.num_epochs = 1 
+        self.batch_size = 5 
+        self.num_epochs = 10 
 
-        self.pos_weight = 1.0 
-        self.n_slices = 6
-
+        self.pos_weight = 2.0
+        self.n_slices = 6 
+class BalancedBCELoss(nn.Module):
+    def __init__(self, beta=0.1):  # beta controls importance of positive class
+        super().__init__()
+        self.beta = beta
+        
+    def forward(self, pred, target):
+        # Calculate weights for each class
+        pos_weight = (1 - self.beta)/(1 - self.beta**torch.sum(target == 0))
+        neg_weight = self.beta/self.beta**torch.sum(target == 1)
+        
+        # Apply weights to BCE loss
+        weights = torch.where(target == 1, pos_weight, neg_weight)
+        bce = F.binary_cross_entropy_with_logits(pred, target, reduction='none')
+        weighted_bce = weights * bce
+        
+        return weighted_bce.mean()
 class Trainer():
     """
     Class for Training LGE Model 
@@ -102,8 +123,15 @@ class Trainer():
             data = data.to(self.config.DEVICE)
             target = target.to(self.config.DEVICE)
 
+
             self.optimizer.zero_grad()
+            
+            
             output = self.model(data)
+
+
+            # debugging step for examining accurayc of segmentations
+            #self.model.plot_segmentations(patient_id, target)
 
             loss = self.criterion(output, target)
             
@@ -111,7 +139,6 @@ class Trainer():
             self.optimizer.step()
             
             total_loss += loss.item()
-            
         return total_loss / len(loader)
 
     def save_checkpoint(self, is_best=False):
@@ -134,6 +161,9 @@ class Trainer():
         for epoch in range(self.config.num_epochs):
             # Training
             train_loss = self.train_epoch(train_dataloader)
+            
+
+
             
             # Validation
             val_metrics = self.evaluator.evaluate(val_dataloader)
@@ -221,11 +251,11 @@ class Evaluator():
 
 
 
-        predictions, targets = self._get_predictions(data_loader)
+        predictions, targets, patient_ids = self._get_predictions(data_loader)
         
 
         auc, accuracy, true_positives, false_negatives, true_negatives, false_positives = self._get_metrics(predictions, targets)
-
+        pdb.set_trace()
 
 
         # Calculate more comples metrics (This one is easier to verify)
@@ -253,17 +283,20 @@ class Evaluator():
     def _get_predictions(self, data_loader):
         predictions = []
         targets = []
+        patient_ids = []
         for data, target, patient_id in data_loader:
             data = data.to(self.device)
             output = self.model(data)
             pred = torch.sigmoid(output)
-            
+
+
             predictions.extend(pred.detach().cpu().numpy())
             targets.extend(target.cpu().numpy())
+            patient_ids.extend(patient_id.cpu().numpy())
         # at this point we can get and parse this behavior more rigorousl        
 
         # Are these specifically np array of shape what? these 1d arrays
-        return np.array(predictions), np.array(targets)
+        return np.array(predictions), np.array(targets), np.array(patient_ids)
 
     def _get_metrics(self, predictions, targets):
 
@@ -273,6 +306,7 @@ class Evaluator():
         calcualtes the predictions and targets given np array 
         """        
         # Calculate core metrics
+
         auc = roc_auc_score(targets, predictions)
         accuracy = ((predictions > 0.5) == targets).mean()
         
@@ -374,6 +408,9 @@ def create_weighted_sampler(dataset, labels):
         replacement=True
     )
     return sampler
+
+
+
 def main():
     config = TrainingConfig()
 
@@ -396,9 +433,12 @@ def main():
 
 
     labels = [dataset[i][1] for i in range(len(td2))]
-    pdb.set_trace()
+
     weights = [1e-10 if label == 0 else 1e10 for label in labels]
     sampler = WeightedRandomSampler(weights = weights, num_samples = len(weights), replacement = False)
+
+
+
     tdl2 = DataLoader(td2, batch_size = config.batch_size, sampler = sampler)
 
     batch = next(iter(tdl2))
@@ -407,7 +447,7 @@ def main():
     k_fold_loaders = dataset_splitter.create_fold_dataloaders(train_dataset)
 
 
-    model = CNNScorer(n_slices = config.n_slices)
+    model = RiskAssessmentModel(n_slices = config.n_slices)
     evaluator = Evaluator(model, config.DEVICE)
 
     trainer = Trainer(model,  evaluator, config)

@@ -1,3 +1,4 @@
+import pdb
 """
 scoring_model.py
 
@@ -145,10 +146,14 @@ class CNNScorer(nn.Module):
 
 
 
-        y = y.view(batch_size, num_images, height, width)
-        self.intermediate_segmented_images = y.clone().detach()
 
+        y = y.view(batch_size, num_images, height, width)
         y = self.sigmoid(y)
+
+
+
+        self.intermediate_segmented_images = y.clone().detach()
+        
         y = self.relu(self.bn1(self.conv1(y)))
         y = self.maxpool(y)
         y = self.relu(self.bn2(self.conv2(y)))
@@ -161,4 +166,84 @@ class CNNScorer(nn.Module):
         # just return y 
 
         return y 
+    def plot_segmentations(self, y = None):
+        import matplotlib.pyplot as plt 
+        fig, ax = plt.subplots(4, self.intermediate_segmented_images.shape[1])
+        images_cpu = self.intermediate_segmented_images.cpu().numpy()
+        for patient in range(4): 
+            for i in range(self.intermediate_segmented_images.shape[1]):
+                ax[patient][i].imshow(images_cpu[patient][i], cmap = 'gray')
+        print(y) 
+
+        plt.show()
+
+class RiskAssessmentModel(nn.Module):
+    def __init__(self, model_save_path = './models/unet_att_focal_dice350.pt', n_slices = 3, freeze_backbone = True):
+        super().__init__()
+        
+        # Define the model to make
+        self.LGE_segmenter = AttentionUNet()
+
+        # Error: How do I load the parameters: use load_state_dict on the model
+        # Here I need to load the "state" dict object --> this thing has all the parameters
+        # then call the state dict fucntion to transfer paremterss to model 
+        model_parameters = torch.load(model_save_path) # warning
+        self.LGE_segmenter.load_state_dict(model_parameters)
+
+ 
+        self.sigmoid = nn.Sigmoid()
+        # Risk assessment head
+        self.risk_head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(9600, 50),
+
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(50, 1)  # Continuous risk score
+        )
+    
+    def forward(self, x):
+        # TODO: codify and verify the testing functionaltiy fo the network  thorugh inspection
+
+        batch_size, num_images, height, width = x.shape
+        x = x.reshape(-1, 1,  height, width) # Run all the images in parallel - get all batches
+
+
+        y = self.LGE_segmenter(x) # run all images foward with segmenter in batch it will act like we are doing a bunch more examples
+        y = y.view(batch_size, num_images, height, width)
+        y = self.sigmoid(y) # fucntion for running all logits through normalizer
+
+
+        self.intermediate_segmented_images = y.clone().detach()
+
+
+#        pdb.set_trace()
+
+       # y = y.reshape(-1, 1,  height, width) # why did i do this? there is no need
+
+        self.pool = nn.AdaptiveAvgPool2d(40)
+        y = self.pool(y) 
+        #y = y.view(batch_size, num_images, 40, 40)
+
+        risk_score = self.risk_head(y)
+
+        risk_score = risk_score.squeeze(1)
+        return risk_score
+     
+    def plot_segmentations(self, patient_ids = None, y = None):
+        import matplotlib.pyplot as plt 
+        fig, ax = plt.subplots(4, self.intermediate_segmented_images.shape[1])
+        images_cpu = self.intermediate_segmented_images.cpu().numpy()
+        
+        if patient_ids == None: 
+            patient_ids = [0, 0, 0, 0]
+        if y == None: 
+            y = [0, 0, 0, 0]
+
+        for idx, (patient, case) in enumerate(zip(patient_ids, y), 0): 
+            for i in range(self.intermediate_segmented_images.shape[1]):
+                ax[idx][i].imshow(images_cpu[idx][i], cmap = 'gray')
+                ax[idx][i].set_title(f'patient: {patient} case: {case}')
+
+        plt.show()
 
