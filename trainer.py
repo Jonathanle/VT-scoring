@@ -6,13 +6,13 @@ from torch.utils.data import Subset, DataLoader, WeightedRandomSampler
 import torch.nn as nn
 
 import torch.nn.functional as F
-
+from torch.optim.lr_scheduler import StepLR, ExponentialLR
 
 import numpy as np
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
-from scoring_model import BaselineScorer, CNNScorer, RiskAssessmentModel
+from scoring_model import BaselineScorer, CNNScorer, RiskAssessmentModel, CNNScorerWithMasks
 from dataset import Preprocessor, LGEDataset
 
 from torch.utils.data import SubsetRandomSampler
@@ -54,18 +54,20 @@ Training Difficulties - Interpreting what does AUC actually mean? how cna I impr
 
 AUC - useful for knowing if the model can actualy discriminate invariant to thresholds like precision
 
+# issues in analyzing --> what is truely deterministic vs stochastic?
+
 TODO: System to adequately visualize the matplotlib intermediate LGE segmentations + the actual LGE image emphasized for humans
 """
 
 
 class TrainingConfig():
     def __init__(self): 
-        self.learning_rate = 1e-3
+        self.learning_rate = 1e-4
         self.DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.batch_size = 5 
-        self.num_epochs = 10 
+        self.num_epochs = 50
 
-        self.pos_weight = 2.0
+        self.pos_weight = 4.0 
         self.n_slices = 6 
 class BalancedBCELoss(nn.Module):
     def __init__(self, beta=0.1):  # beta controls importance of positive class
@@ -112,6 +114,9 @@ class Trainer():
         )
         pos_weight = torch.tensor([config.pos_weight]).to(config.DEVICE) # Error I need to push this into the devicd
         self.criterion = nn.BCEWithLogitsLoss(pos_weight = pos_weight)
+
+
+        self.scheduler = ExponentialLR(self.optimizer, gamma=0.95)
 
     def train_epoch(self, loader):
         """Single training epoch."""
@@ -163,7 +168,7 @@ class Trainer():
             train_loss = self.train_epoch(train_dataloader)
             
 
-
+            
             
             # Validation
             val_metrics = self.evaluator.evaluate(val_dataloader)
@@ -195,13 +200,29 @@ class Trainer():
 
 
 
+    def _reinitialize_model(self):
+        """Method 1: Create a new instance of the model"""
+        # Assuming self.model is a CNNScorerWithMasks
+        new_model = CNNScorerWithMasks(n_slices=self.config.n_slices)
+        new_model = new_model.to(self.config.DEVICE)
+        self.model = new_model
+        
 
+        self.evaluator = Evaluator(self.model, self.config.DEVICE)
+        # Reinitialize optimizer with new model parameters
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(),
+            lr=self.config.learning_rate
+        )
     def train_k_fold(self, k_fold_loaders):
         """Main training loop with validation. Uses kfold for validating"""
 
         metrics = np.zeros((len(k_fold_loaders), 5), dtype=np.float32)
 
         for i, (train_loader, val_loader) in enumerate(k_fold_loaders): 
+            
+
+            self._reinitialize_model()
             for epoch in range(self.config.num_epochs):
                 # Training
                 train_loss = self.train_epoch(train_loader)
@@ -215,24 +236,7 @@ class Trainer():
                 recall = val_metrics['recall']
 
                 metrics[i] = np.array([val_auc, sensitivity, specificity, precision, recall])
-                """         
-                # Learning rate scheduling
-                self.scheduler.step(val_auc)
-                
-                # Save best model
-                if val_auc > self.best_val_auc:
-                    self.best_val_auc = val_auc
-                    self.patience_counter = 0
-                    self.save_checkpoint(is_best=True)
-                else:
-                    self.patience_counter += 1
-                
-                # Early stopping
-                if self.patience_counter >= self.config.patience:
-                    print("Early stopping triggered")
-                    break
-                
-                """
+
                 print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}, Val AUC = {val_auc:.4f} precision: {precision:.4f} recall {recall} sens {sensitivity} spec {specificity}")
         scores = np.mean(metrics, axis = 0)
         print(f"auc: {scores[0]} sens: {scores[1]} spec: {scores[2]} precision: {scores[3]}")
@@ -255,7 +259,7 @@ class Evaluator():
         
 
         auc, accuracy, true_positives, false_negatives, true_negatives, false_positives = self._get_metrics(predictions, targets)
-        pdb.set_trace()
+        #pdb.set_trace()
 
 
         # Calculate more comples metrics (This one is easier to verify)
@@ -417,7 +421,7 @@ def main():
 
     # Code Requires ./dataprocessed mri_data repository
     pp = Preprocessor()
-    X, y, ids = pp.transform(config.n_slices) # this dataset 
+    X, y, ids = pp.transform(config.n_slices, include_masks= True) # this dataset 
 
     dataset = LGEDataset(X, y, ids)
 
@@ -425,6 +429,7 @@ def main():
     train_dataset, _ , test_dataset = dataset_splitter.split_dataset(dataset, combine_train_validation_sets=True)
 
 
+    # confusing logic for dataset splitting
 
     td2, vd2, _ = dataset_splitter.split_dataset(dataset, combine_train_validation_sets=False)
 
@@ -447,7 +452,7 @@ def main():
     k_fold_loaders = dataset_splitter.create_fold_dataloaders(train_dataset)
 
 
-    model = RiskAssessmentModel(n_slices = config.n_slices)
+    model = CNNScorerWithMasks(n_slices = config.n_slices)
     evaluator = Evaluator(model, config.DEVICE)
 
     trainer = Trainer(model,  evaluator, config)

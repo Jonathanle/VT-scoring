@@ -49,7 +49,7 @@ class Preprocessor():
         """ 
 
 
-    def transform(self, n_slices = 6):
+    def transform(self, n_slices = 6, include_masks = True):
         """
         Function that transforms the image data + the xlsx files into a pytorch dataset 
 
@@ -66,8 +66,6 @@ class Preprocessor():
             X = (n_patients, n_slices, 128, 128) - note that X values 
         """
 
-        # heuristic + easy create a dictionary --> np array from patient id
-        # df is this good? 
         image_dict = {} # Create a dictionary of tensors for torch array
 
         for patient_id in self.df['studyid']:
@@ -78,6 +76,9 @@ class Preprocessor():
             slices = np.zeros((n_slices, 128, 128)) # hardcoded 128 values
             # Error - Here I need to consider np array as taking in a TUPLE for the shape not the actual parameters next time online monitoring see that
 
+
+            # add masks: 
+            masks = np.zeros((n_slices, 128, 128))
 
             for slice_no in range(n_slices):
                 filename = f'raw_{slice_no}.npy' # forgoot to aadd numpy (not a prioritized error
@@ -90,13 +91,18 @@ class Preprocessor():
                     break 
 
                 slice = np.load(filepath)
+
+
+                masks[slice_no] = slice > 1e-3 # get the mask
                 slices[slice_no] = slice
 
             if not valid_case: 
                 continue
 
-                
-            image_dict[patient_id] = torch.Tensor(slices)
+            if include_masks:
+                image_dict[patient_id] = torch.stack([torch.Tensor(slices), torch.Tensor(masks)])
+            else: 
+                image_dict[patient_id] = torch.Tensor(slices)
 
         label_dict = {id: torch.tensor(label) for id, label in zip(self.df['studyid'], self.df['composite'])} # need tensor values in the dictionary to create stack
 
@@ -106,6 +112,12 @@ class Preprocessor():
 
 
         X = torch.stack([image_dict[key] for key in keys])
+        # permute
+
+        X = torch.permute(X, (0, 2, 1, 3, 4))
+
+
+
         y = torch.stack([label_dict[key] for key in keys])
 
         return X, y, keys
@@ -162,7 +174,11 @@ def main():
 
     pp = Preprocessor()
 
-    X, y, keys = pp.transform()
+    X, y, keys = pp.transform(include_masks = True)
+
+    import pdb
+    pdb.set_trace()
+
 
     dataset = LGEDataset(X, y, keys)
 
