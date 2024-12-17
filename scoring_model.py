@@ -220,6 +220,9 @@ class CNNScorerWithMasks(nn.Module):
         self.intermediate_segmented_images = None
 
         # df how could i verify the output dimensions of Attention U_net? 
+
+
+        
     def forward(self, x):  
 
         # Emphasize this computation in forward to be able to debug outputs rather than using nn sequential.

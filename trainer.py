@@ -16,6 +16,10 @@ from scoring_model import BaselineScorer, CNNScorer, RiskAssessmentModel, CNNSco
 from dataset import Preprocessor, LGEDataset
 
 from torch.utils.data import SubsetRandomSampler
+
+
+from sklearn.metrics import roc_curve, auc
+import matplotlib.pyplot as plt
 """
 Steps to validation 
 
@@ -64,8 +68,8 @@ class TrainingConfig():
     def __init__(self): 
         self.learning_rate = 1e-4
         self.DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.batch_size = 5 
-        self.num_epochs = 50
+        self.batch_size 
+        self.num_epochs = 10 
 
         self.pos_weight = 4.0 
         self.n_slices = 6 
@@ -116,8 +120,6 @@ class Trainer():
         self.criterion = nn.BCEWithLogitsLoss(pos_weight = pos_weight)
 
 
-        self.scheduler = ExponentialLR(self.optimizer, gamma=0.95)
-
     def train_epoch(self, loader):
         """Single training epoch."""
         #TODO: Evaluate to see if this correct and ideal for my kind of data
@@ -167,7 +169,7 @@ class Trainer():
             # Training
             train_loss = self.train_epoch(train_dataloader)
             
-
+            #self.scheduler.step()
             
             
             # Validation
@@ -312,6 +314,9 @@ class Evaluator():
         # Calculate core metrics
 
         auc = roc_auc_score(targets, predictions)
+
+        iplot = self.plot_roc_auc(targets, predictions)
+
         accuracy = ((predictions > 0.5) == targets).mean()
         
         # Calculate sensitivity and specificity
@@ -322,11 +327,36 @@ class Evaluator():
 
         return auc, accuracy, true_positives, false_negatives, true_negatives, false_positives
 
+    def plot_roc_auc(self, y_true, y_pred_proba):
+
+        pdb.set_trace()
+        # Calculate ROC curve and ROC area
+        fpr, tpr, _ = roc_curve(y_true, y_pred_proba)
+        roc_auc = auc(fpr, tpr)
+        
+        # Plot
+        plt.figure(figsize=(8, 6))
+        plt.plot(fpr, tpr, color='darkorange', lw=2, 
+                label=f'ROC curve (AUC = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic (ROC) Curve')
+        plt.legend(loc="lower right")
+        plt.grid(True)
+        return plt
+
+    # Usage example:
+    # plot_roc_auc(y_true, model.predict_proba(X_test)[:, 1])
+    # plt.show()
 
 class DatasetSplitter(): 
     def __init__(self): 
         pass
     def split_dataset(self, dataset, combine_train_validation_sets = False):
+        seed = 52 
 
         indices = list(range(len(dataset)))
         labels = [dataset[i][1] for i in indices]
@@ -334,7 +364,8 @@ class DatasetSplitter():
         train_idx, test_idx = train_test_split(
             indices,
             stratify = labels, 
-            test_size = 0.3
+            test_size = 0.3,
+            random_state = seed, # generate the ROC - Curve -- Intermediate - 
         )
 
 
@@ -344,7 +375,8 @@ class DatasetSplitter():
         val_idx, final_test_idx = train_test_split(
             test_idx,
             stratify = test_labels, 
-            test_size = 0.5
+            test_size = 0.5,
+            random_state=seed
         )
 
         if combine_train_validation_sets: 

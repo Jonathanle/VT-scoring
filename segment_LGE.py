@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 # this neeeds to be ArgumentParser not Parser
 parser = argparse.ArgumentParser(description="basic file for processing models")
 
-parser.add_argument("--input_dir", "-i", default = "./data/processed_mri_data2/", required = False)
+parser.add_argument("--input_dir", "-i", default = "./data/processed_mri_data2/855", required = False)
 parser.add_argument("--patient", '-p', type=int, default = 529, required = False)
 parser.add_argument('-s', '--slice', type=int, default = 0, required = False, help='slice number')
 parser.add_argument("--device", required = False, default = 'cuda:0')
